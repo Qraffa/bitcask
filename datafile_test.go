@@ -3,23 +3,24 @@ package main
 import (
 	"fmt"
 	"os"
+	"path"
 	"testing"
 )
 
 func TestDatafile(t *testing.T) {
-	df, err := NewDataFile(99, true)
+	df, err := NewDataFile(defaultDir, 99, true)
 	if err != nil {
 		panic(err)
 	}
 
-	e := NewEntry([]byte("key"), []byte("value"))
+	e := NewEntry([]byte("key"), []byte("value"), PUT)
 
 	if _, err := df.Write(e); err != nil {
 		panic(err)
 	}
 	fmt.Println(e.crc)
 
-	re, err := df.ReadAt(0)
+	_, re, err := df.ReadAt(0)
 	if err != nil {
 		panic(err)
 	}
@@ -27,12 +28,13 @@ func TestDatafile(t *testing.T) {
 }
 
 func TestRead(t *testing.T) {
-	df, err := NewDataFile(99, true)
+	df, err := NewDataFile(defaultDir, 99, true)
+	fmt.Println(df.offset)
 	if err != nil {
 		panic(err)
 	}
 
-	re, err := df.ReadAt(145)
+	_, re, err := df.ReadAt(0)
 	if err != nil {
 		panic(err)
 	}
@@ -40,7 +42,7 @@ func TestRead(t *testing.T) {
 }
 
 func TestFileSize(t *testing.T) {
-	fi, err := os.Stat("tmp")
+	fi, err := os.Stat(path.Join(defaultDir, fmt.Sprintf(dataFilePrefix, 99)))
 	if err != nil {
 		panic(err)
 	}
