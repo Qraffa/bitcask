@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"sync"
 )
 
 const (
@@ -24,6 +26,7 @@ type Bitcask struct {
 	active    *DataFile
 	datafiles map[int64]*DataFile
 	dir       string
+	mu        sync.RWMutex
 }
 
 func Open(dir string) (*Bitcask, error) {
@@ -100,11 +103,94 @@ func (db *Bitcask) Keys() int {
 	return len(db.index)
 }
 
-func (db *Bitcask) checkIfNeeded(add int64) error {
-	size := db.active.Size()
-	// can add entry
-	if size+add < defaultMaxFileSize {
-		return nil
+func (db *Bitcask) merge() error {
+	// like copy-on-write
+	tmpdir := path.Join(defaultDir, "tmp_db")
+	// tmpdir no datafile, currid=0
+	mdb, err := Open(tmpdir)
+	if err != nil {
+		return err
+	}
+	mdb.index = make(map[string]*item, len(db.index))
+	// copy index
+	db.mu.RLock()
+	for k, v := range db.index {
+		mdb.index[k] = v
+	}
+	lastid := db.currID
+	// force to use new datafile
+	err = db.checkIfNeeded(0, true)
+	if err != nil {
+		db.mu.RUnlock()
+		return err
+	}
+	db.mu.RUnlock()
+	// mdb rebuild datafile
+	for _, v := range mdb.index {
+		db.mu.RLock()
+		file := db.datafiles[v.fileID]
+		db.mu.RUnlock()
+		_, entry, err := file.ReadAt(v.entryOffset)
+		if err != nil {
+			return err
+		}
+		if err := mdb.Put(entry.key, entry.value); err != nil {
+			return err
+		}
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	startID := db.currID + 1
+	for k := range mdb.index {
+		// means k-v has newer value
+		if db.index[k].fileID > db.currID {
+			continue
+		}
+		// update origin db index
+		mdb.index[k].fileID = mdb.index[k].fileID + startID
+		db.index[k] = mdb.index[k]
+	}
+	// move tmp-datafile to db dir
+	for _, file := range mdb.datafiles {
+		newfile := getNewFileName(tmpdir, db.dir, file.f.Name(), startID)
+		if err := os.Rename(file.f.Name(), newfile); err != nil {
+			return err
+		}
+		fileid := getFileID(newfile)
+		df, err := NewDataFile(db.dir, fileid, false)
+		if err != nil {
+			return err
+		}
+		db.datafiles[fileid] = df
+	}
+	// remove old datafile
+	for _, v := range db.datafiles {
+		if v.fileID > lastid {
+			// update currID
+			if v.fileID > db.currID {
+				db.currID = v.fileID
+			}
+			continue
+		}
+		delete(db.datafiles, v.fileID)
+		os.Remove(v.f.Name())
+	}
+	// force to use new datafile
+	if err := db.checkIfNeeded(0, true); err != nil {
+		return err
+	}
+	return nil
+}
+
+// force==true, means db must use new datafile
+func (db *Bitcask) checkIfNeeded(add int64, force bool) error {
+	if !force {
+		size := db.active.Size()
+		// can add entry
+		if size+add < defaultMaxFileSize {
+			return nil
+		}
 	}
 	// open new datafile
 	// close active
@@ -151,7 +237,7 @@ func (db *Bitcask) append(key []byte, value []byte, mark uint8) (int64, error) {
 		return 0, errors.New("")
 	}
 	e := NewEntry(key, value, mark)
-	if err := db.checkIfNeeded(int64(e.Size())); err != nil {
+	if err := db.checkIfNeeded(int64(e.Size()), false); err != nil {
 		return 0, err
 	}
 	offset, err := db.active.Write(e)
