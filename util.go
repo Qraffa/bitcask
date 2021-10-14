@@ -4,7 +4,15 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
+
+func init() {
+	log.SetFormatter(&log.TextFormatter{
+		ForceColors: true,
+	})
+}
 
 func getFileID(file string) int64 {
 	idx := strings.LastIndex(file, ".")

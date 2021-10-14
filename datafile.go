@@ -30,7 +30,7 @@ func NewDataFile(dir string, id int64, active bool) (*DataFile, error) {
 		flag = os.O_RDONLY
 		perm = 0
 	}
-	file := path.Join(dir,fmt.Sprintf(dataFilePrefix, id))
+	file := path.Join(dir, fmt.Sprintf(dataFilePrefix, id))
 	fd, err := os.OpenFile(file, flag, perm)
 	if err != nil {
 		return nil, err
@@ -39,7 +39,7 @@ func NewDataFile(dir string, id int64, active bool) (*DataFile, error) {
 		f:        fd,
 		fileID:   id,
 		offset:   0,
-		isActive: true,
+		isActive: active,
 	}, nil
 }
 
@@ -73,7 +73,7 @@ func (d *DataFile) Size() int64 {
 }
 
 func (d *DataFile) ReadAt(offset int64) (int64, *Entry, error) {
-	if d.f == nil || !d.isActive {
+	if d.f == nil {
 
 	}
 	// read k-v meta

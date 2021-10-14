@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultMaxFileSize = 30
+	defaultMaxFileSize = 1 << 25
 	defaultDir         = "/tmp/bitcask"
 )
 
@@ -26,6 +26,7 @@ type Bitcask struct {
 	active    *DataFile
 	datafiles map[int64]*DataFile
 	dir       string
+	isMerging bool
 	mu        sync.RWMutex
 }
 
@@ -57,6 +58,8 @@ func Open(dir string) (*Bitcask, error) {
 }
 
 func (db *Bitcask) Put(key []byte, value []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
 	// check key value size
 	offset, err := db.put(key, value)
 	if err != nil {
@@ -71,6 +74,8 @@ func (db *Bitcask) Put(key []byte, value []byte) error {
 }
 
 func (db *Bitcask) Get(key []byte) ([]byte, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
 	it, ok := db.index[string(key)]
 	if !ok {
 		return nil, errors.New("")
@@ -87,6 +92,8 @@ func (db *Bitcask) Get(key []byte) ([]byte, error) {
 }
 
 func (db *Bitcask) Del(key []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
 	_, ok := db.index[string(key)]
 	// key not found
 	if !ok {
@@ -104,6 +111,13 @@ func (db *Bitcask) Keys() int {
 }
 
 func (db *Bitcask) merge() error {
+	db.mu.Lock()
+	// merging
+	if db.isMerging {
+		return nil
+	}
+	db.isMerging = true
+	db.mu.Unlock()
 	// like copy-on-write
 	tmpdir := path.Join(defaultDir, "tmp_db")
 	// tmpdir no datafile, currid=0
@@ -111,9 +125,9 @@ func (db *Bitcask) merge() error {
 	if err != nil {
 		return err
 	}
-	mdb.index = make(map[string]*item, len(db.index))
 	// copy index
-	db.mu.RLock()
+	db.mu.Lock()
+	mdb.index = make(map[string]*item, len(db.index))
 	for k, v := range db.index {
 		mdb.index[k] = v
 	}
@@ -121,10 +135,10 @@ func (db *Bitcask) merge() error {
 	// force to use new datafile
 	err = db.checkIfNeeded(0, true)
 	if err != nil {
-		db.mu.RUnlock()
+		db.mu.Unlock()
 		return err
 	}
-	db.mu.RUnlock()
+	db.mu.Unlock()
 	// mdb rebuild datafile
 	for _, v := range mdb.index {
 		db.mu.RLock()
@@ -180,6 +194,7 @@ func (db *Bitcask) merge() error {
 	if err := db.checkIfNeeded(0, true); err != nil {
 		return err
 	}
+	db.isMerging = false
 	return nil
 }
 
@@ -199,7 +214,7 @@ func (db *Bitcask) checkIfNeeded(add int64, force bool) error {
 		return err
 	}
 
-	oldID := db.currID
+	oldID := db.active.fileID
 	db.currID = db.nextID()
 	active, err := NewDataFile(db.dir, db.currID, true)
 	if err != nil {
