@@ -305,3 +305,17 @@ func BenchmarkPut(b *testing.B) {
 		})
 	}
 }
+
+func TestDel(t *testing.T) {
+	if err := db.Put([]byte("key"), []byte("value")); err != nil {
+		panic(err)
+	}
+	if err := db.Del([]byte("key")); err != nil {
+		panic(err)
+	}
+	ndb, err := Open("")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(ndb.Keys())
+}

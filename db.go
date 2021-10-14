@@ -303,6 +303,9 @@ func (db *Bitcask) loadIndexFromFile(df *DataFile) {
 		}
 		// means k-v deleted. pass
 		if entry.mark == DEL {
+			if _, ok := db.index[string(entry.key)]; ok {
+				delete(db.index, string(entry.key))
+			}
 			offset += n
 			continue
 		}
