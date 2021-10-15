@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path"
@@ -11,7 +10,7 @@ import (
 )
 
 const (
-	defaultMaxFileSize = 1 << 25
+	defaultMaxFileSize = 1 << 30
 	defaultDir         = "/tmp/bitcask"
 )
 
@@ -25,6 +24,7 @@ type Bitcask struct {
 	currID    int64
 	active    *DataFile
 	datafiles map[int64]*DataFile
+	hintfiles map[int64]*HintFile
 	dir       string
 	isMerging bool
 	mu        sync.RWMutex
@@ -41,10 +41,12 @@ func Open(dir string) (*Bitcask, error) {
 		currID:    -1,
 		index:     make(map[string]*item, 0),
 		datafiles: make(map[int64]*DataFile, 0),
+		hintfiles: make(map[int64]*HintFile, 0),
 		dir:       dir,
 	}
 
 	db.loadDataFiles(db.dir)
+	db.loadHintFiles(db.dir)
 	db.loadIndex()
 	db.currID = db.nextID()
 	df, err := NewDataFile(db.dir, db.currID, true)
@@ -139,6 +141,7 @@ func (db *Bitcask) merge() error {
 		return err
 	}
 	db.mu.Unlock()
+	hf := NewHintFile()
 	// mdb rebuild datafile
 	for _, v := range mdb.index {
 		db.mu.RLock()
@@ -149,6 +152,11 @@ func (db *Bitcask) merge() error {
 			return err
 		}
 		if err := mdb.Put(entry.key, entry.value); err != nil {
+			return err
+		}
+		// write hint file, the same as datafile fileid
+		it := mdb.index[string(entry.key)]
+		if err := hf.WriteHint(mdb.dir, it.fileID, entry.key, it.entryOffset); err != nil {
 			return err
 		}
 	}
@@ -164,6 +172,17 @@ func (db *Bitcask) merge() error {
 		// update origin db index
 		mdb.index[k].fileID = mdb.index[k].fileID + startID
 		db.index[k] = mdb.index[k]
+	}
+	// move hint file, don't need to open it
+	files, err := filepath.Glob(path.Join(mdb.dir, hintFilePattern))
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		newfile := getNewFileName(tmpdir, db.dir, file, startID)
+		if err := os.Rename(file, newfile); err != nil {
+			return err
+		}
 	}
 	// move tmp-datafile to db dir
 	for _, file := range mdb.datafiles {
@@ -263,7 +282,7 @@ func (db *Bitcask) append(key []byte, value []byte, mark uint8) (int64, error) {
 }
 
 func (db *Bitcask) loadDataFiles(dir string) error {
-	files, err := filepath.Glob(fmt.Sprintf("%s/%s", dir, dataFilePattern))
+	files, err := filepath.Glob(path.Join(dir, dataFilePattern))
 	if err != nil {
 		return err
 	}
@@ -281,9 +300,56 @@ func (db *Bitcask) loadDataFiles(dir string) error {
 	return nil
 }
 
+func (db *Bitcask) loadHintFiles(dir string) error {
+	files, err := filepath.Glob(path.Join(dir, hintFilePattern))
+	if err != nil {
+		return err
+	}
+	if db.hintfiles == nil {
+		db.hintfiles = make(map[int64]*HintFile)
+	}
+	for _, file := range files {
+		id := getFileID(file)
+		hf, err := OpenHintFile(dir, id)
+		if err != nil {
+			return err
+		}
+		db.hintfiles[id] = hf
+	}
+	return nil
+}
+
+// rebuild index
 func (db *Bitcask) loadIndex() {
 	for _, df := range db.datafiles {
-		db.loadIndexFromFile(df)
+		// load from hint first
+		if hf, ok := db.hintfiles[df.fileID]; ok {
+			db.loadIndexFromHint(hf)
+		} else {
+			db.loadIndexFromFile(df)
+		}
+	}
+}
+
+func (db *Bitcask) loadIndexFromHint(hf *HintFile) {
+	if hf == nil {
+		return
+	}
+	var offset int64 = 0
+	for {
+		n, he, err := hf.ReadAt(offset)
+		if err == io.EOF {
+			break
+		}
+		if err != nil || he == nil {
+			return
+		}
+		it := &item{
+			fileID:      hf.fileID,
+			entryOffset: int64(he.offset),
+		}
+		offset += n
+		db.index[string(he.key)] = it
 	}
 }
 

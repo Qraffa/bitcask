@@ -4,7 +4,9 @@ import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"math/rand"
+	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync"
@@ -314,6 +316,50 @@ func TestDel(t *testing.T) {
 		panic(err)
 	}
 	ndb, err := Open("")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(ndb.Keys())
+}
+
+func TestHint(t *testing.T) {
+	cpuf, _ := os.Create("cpu_profile")
+	pprof.StartCPUProfile(cpuf)
+	defer pprof.StopCPUProfile()
+	// put many and rebuild
+	start := time.Now()
+	for n := 0; n < 1e6; n++ {
+		key := GetKey(n)
+		val := GetValue()
+		err := db.Put(key, val)
+		if err != nil {
+			panic(err)
+		}
+	}
+	dur := time.Since(start)
+
+	log.WithFields(log.Fields{
+		"duration": dur,
+	}).Info("put 1e6 kv")
+
+	start = time.Now()
+	db.merge()
+	dur = time.Since(start)
+
+	log.WithFields(log.Fields{
+		"duration": dur,
+	}).Info("merge")
+
+	fmt.Println(db.Keys())
+
+	start = time.Now()
+	ndb, err := Open("")
+	dur = time.Since(start)
+
+	log.WithFields(log.Fields{
+		"duration": dur,
+	}).Info("rebuild")
+
 	if err != nil {
 		panic(err)
 	}
