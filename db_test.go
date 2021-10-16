@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"math/rand"
@@ -15,10 +16,10 @@ import (
 )
 
 func TestDB(t *testing.T) {
-	db, err := Open("")
-	if err != nil {
-		panic(err)
-	}
+	//db, err := Open("")
+	//if err != nil {
+	//	panic(err)
+	//}
 	if err := db.Put([]byte("key"), []byte("value")); err != nil {
 		panic(err)
 	}
@@ -35,6 +36,9 @@ func TestDB(t *testing.T) {
 		panic(err)
 	}
 	fmt.Println(string(val))
+
+	ndb, err := Open("")
+	_ = ndb
 }
 
 func TestGlob(t *testing.T) {
@@ -255,8 +259,8 @@ func GetKey(n int) []byte {
 	return []byte("test_key_" + fmt.Sprintf("%09d", n))
 }
 
-func GetValue() []byte {
-	return []byte("test_val-val-val-val-val-val-val-val-val-val-val-val-" + strconv.FormatInt(rand.Int63(), 10))
+func GetValue(n int) []byte {
+	return []byte("test_val-val-val-val-val-val-val-val-val-val-val-val-" + strconv.FormatInt(int64(n), 10))
 }
 
 type benchmarkTestCase struct {
@@ -264,18 +268,41 @@ type benchmarkTestCase struct {
 	size int
 }
 
+// go test -bench=BenchmarkPutKV -benchmem -test.run=BenchmarkPutKV -benchtime=1000000x
 func BenchmarkPutKV(b *testing.B) {
+	cpuf, _ := os.Create("cpu_profile")
+	pprof.StartCPUProfile(cpuf)
+	defer pprof.StopCPUProfile()
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for n := 0; n < b.N; n++ {
-		key := GetKey(n)
-		val := GetValue()
+	for i := 0; i < b.N; i++ {
+		key := GetKey(i)
+		val := GetValue(i)
 		err := db.Put(key, val)
 		if err != nil {
 			panic(err)
 		}
 	}
+}
+
+// go test -bench=BenchmarkGetKV -benchmem -test.run=BenchmarkGetKV -benchtime=1000000x
+func BenchmarkGetKV(b *testing.B) {
+	cpuf, _ := os.Create("cpu_profile")
+	pprof.StartCPUProfile(cpuf)
+	defer pprof.StopCPUProfile()
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	var cnt int = 0
+	for i := 0; i < b.N; i++ {
+		key := GetKey(i)
+		_, err := db.Get(key)
+		if errors.Is(err, errors.New("not found")) {
+			cnt++
+		}
+	}
+	fmt.Println(cnt)
 }
 
 func BenchmarkPut(b *testing.B) {
@@ -324,28 +351,39 @@ func TestDel(t *testing.T) {
 
 func TestHint(t *testing.T) {
 	cpuf, _ := os.Create("cpu_profile")
+	memf, _ := os.Create("mem_profile")
 	pprof.StartCPUProfile(cpuf)
 	defer pprof.StopCPUProfile()
+	var limit int = 2e6
+	num := make([]int, limit)
 	// put many and rebuild
 	start := time.Now()
-	for n := 0; n < 1e6; n++ {
+	for n := 0; n < limit; n++ {
 		key := GetKey(n)
-		val := GetValue()
+		val := GetValue(n)
 		err := db.Put(key, val)
 		if err != nil {
 			panic(err)
 		}
+		num[n] = n
 	}
 	dur := time.Since(start)
-
 	log.WithFields(log.Fields{
 		"duration": dur,
 	}).Info("put 1e6 kv")
 
+	// rand delete
+	rand.Shuffle(limit-1, func(i, j int) {
+		num[i], num[j] = num[j], num[i]
+	})
+	for i := 0; i < limit/2; i++ {
+		db.Del(GetKey(i))
+	}
+	fmt.Println(db.Keys())
+
 	start = time.Now()
 	db.merge()
 	dur = time.Since(start)
-
 	log.WithFields(log.Fields{
 		"duration": dur,
 	}).Info("merge")
@@ -355,7 +393,6 @@ func TestHint(t *testing.T) {
 	start = time.Now()
 	ndb, err := Open("")
 	dur = time.Since(start)
-
 	log.WithFields(log.Fields{
 		"duration": dur,
 	}).Info("rebuild")
@@ -364,4 +401,9 @@ func TestHint(t *testing.T) {
 		panic(err)
 	}
 	fmt.Println(ndb.Keys())
+	pprof.WriteHeapProfile(memf)
+}
+
+func TestPageSize(t *testing.T) {
+	fmt.Println(os.Getpagesize())
 }

@@ -1,10 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"os"
 	"path"
 )
@@ -24,9 +24,10 @@ type HintEntry struct {
 }
 
 type HintFile struct {
-	f      *os.File
-	fileID int64
-	offset int64
+	f         *os.File
+	fileID    int64
+	offset    int64
+	bufWriter *bufio.Writer
 }
 
 func NewHintFile() *HintFile {
@@ -57,19 +58,27 @@ func (h *HintFile) WriteHint(dir string, fileID int64, key []byte, offset int64)
 				return err
 			}
 		}
-		log.Info("new hint file")
+
 		fd, err := os.OpenFile(path.Join(dir, fmt.Sprintf(hintFilePrefix, fileID)), os.O_CREATE|os.O_APPEND|os.O_RDWR, os.ModePerm)
 		if err != nil {
 			return err
 		}
 		h.f = fd
 		h.fileID = fileID
+		h.bufWriter = bufio.NewWriterSize(fd, 4096)
 	}
 	entry := newHintEntry(key, offset)
 	size, entryBuf := entry.Encode()
-	h.f.Write(entryBuf)
+	h.bufWriter.Write(entryBuf)
 	h.offset += int64(size)
 	return nil
+}
+
+func (h *HintFile) Flush() {
+	if h.f == nil || h.bufWriter == nil {
+		return
+	}
+	h.bufWriter.Flush()
 }
 
 func (h *HintFile) ReadAt(offset int64) (int64, *HintEntry, error) {

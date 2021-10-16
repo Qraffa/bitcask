@@ -80,7 +80,7 @@ func (db *Bitcask) Get(key []byte) ([]byte, error) {
 	defer db.mu.RUnlock()
 	it, ok := db.index[string(key)]
 	if !ok {
-		return nil, errors.New("")
+		return nil, errors.New("not found")
 	}
 	df, ok := db.datafiles[it.fileID]
 	if !ok {
@@ -147,19 +147,24 @@ func (db *Bitcask) merge() error {
 		db.mu.RLock()
 		file := db.datafiles[v.fileID]
 		db.mu.RUnlock()
+		// 随机读
 		_, entry, err := file.ReadAt(v.entryOffset)
 		if err != nil {
 			return err
 		}
+		// 顺序append
 		if err := mdb.Put(entry.key, entry.value); err != nil {
 			return err
 		}
 		// write hint file, the same as datafile fileid
 		it := mdb.index[string(entry.key)]
+		// 顺序append
+		// ==> bufio write
 		if err := hf.WriteHint(mdb.dir, it.fileID, entry.key, it.entryOffset); err != nil {
 			return err
 		}
 	}
+	hf.Flush()
 
 	db.mu.Lock()
 	defer db.mu.Unlock()
