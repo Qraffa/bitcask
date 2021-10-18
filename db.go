@@ -169,6 +169,7 @@ func (db *Bitcask) merge() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	startID := db.currID + 1
+	// TODO bug-fix: deleted key
 	for k := range mdb.index {
 		// means k-v has newer value
 		if db.index[k].fileID > db.currID {

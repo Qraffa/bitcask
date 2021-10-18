@@ -18,9 +18,9 @@ const (
 
 type Entry struct {
 	crc       uint32
-	mark      uint8
 	keySize   uint32
 	valueSize uint64 // lt math.MaxUint64 - 4 - 4 - 8 - math.MaxUint32
+	mark      uint8
 	key       []byte
 	value     []byte
 }
