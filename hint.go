@@ -100,7 +100,7 @@ func (h *HintFile) ReadAt(offset int64) (int64, *HintEntry, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	copy(keyBuf, keyBuf)
+	he.key = keyBuf
 
 	return int64(metaOffset + keyOffset), he, nil
 }

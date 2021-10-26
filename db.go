@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"sync"
 )
 
@@ -169,8 +170,13 @@ func (db *Bitcask) merge() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	startID := db.currID + 1
-	// TODO bug-fix: deleted key
+	deadKey := make([]string, 0)
 	for k := range mdb.index {
+		// means k-v deleted
+		if _, ok := db.index[k]; !ok {
+			deadKey = append(deadKey, k)
+			continue
+		}
 		// means k-v has newer value
 		if db.index[k].fileID > db.currID {
 			continue
@@ -218,6 +224,12 @@ func (db *Bitcask) merge() error {
 	// force to use new datafile
 	if err := db.checkIfNeeded(0, true); err != nil {
 		return err
+	}
+	// remove dead key, duplicate delete
+	// when rebuild mdb, db can delete some k-v, so del operation may before hint file,
+	// to solve this, we duplicate delete key
+	for _, k := range deadKey {
+		db.del([]byte(k))
 	}
 	db.isMerging = false
 	return nil
@@ -327,11 +339,19 @@ func (db *Bitcask) loadHintFiles(dir string) error {
 
 // rebuild index
 func (db *Bitcask) loadIndex() {
-	for _, df := range db.datafiles {
+	dfs := make([]int64, 0)
+	for k := range db.datafiles {
+		dfs = append(dfs, k)
+	}
+	sort.Slice(dfs, func(i, j int) bool {
+		return dfs[i] < dfs[j]
+	})
+	for _, fid := range dfs {
 		// load from hint first
-		if hf, ok := db.hintfiles[df.fileID]; ok {
+		if hf, ok := db.hintfiles[fid]; ok {
 			db.loadIndexFromHint(hf)
 		} else {
+			df := db.datafiles[fid]
 			db.loadIndexFromFile(df)
 		}
 	}

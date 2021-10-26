@@ -404,6 +404,39 @@ func TestHint(t *testing.T) {
 	pprof.WriteHeapProfile(memf)
 }
 
+func TestConMergeDel(t *testing.T) {
+	db.Put([]byte("k1"), []byte("v1"))
+	db.Put([]byte("k2"), []byte("v2"))
+	db.Put([]byte("k3"), []byte("v3"))
+
+	time.Sleep(5 * time.Second)
+
+	go func() {
+		db.merge()
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	db.Del([]byte("k1"))
+	db.Del([]byte("k3"))
+	fmt.Println("del finish")
+
+	time.Sleep(3 * time.Second)
+	tdb, err := Open("")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(tdb.Keys())
+}
+
+func TestDBReopen(t *testing.T) {
+	v, err := db.Get([]byte("k1"))
+	fmt.Println(string(v), err)
+	v, err = db.Get([]byte("k2"))
+	fmt.Println(string(v), err)
+	v, err = db.Get([]byte("k3"))
+	fmt.Println(string(v), err)
+}
+
 func TestPageSize(t *testing.T) {
 	fmt.Println(os.Getpagesize())
 }
